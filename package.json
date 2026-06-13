@@ -1,0 +1,26 @@
+{
+  "name": "word-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Word Lab — voice-driven reading & spelling assistant (Arcade design).",
+  "scripts": {
+    "dev": "concurrently -n server,client -c magenta,cyan \"node server/index.js\" \"vite\"",
+    "dev:client": "vite",
+    "dev:server": "node server/index.js",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "vite": "^6.2.4"
+  }
+}

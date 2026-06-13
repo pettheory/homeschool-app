@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Word Lab — Reading &amp; Spelling</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #0c0820; overflow: hidden; }
+  * { -webkit-font-smoothing: antialiased; }
+  #stage-wrap { position: fixed; inset: 0; display: grid; place-items: center; background:
+    radial-gradient(80% 70% at 50% 0%, #1a0f3a, #0c0820 70%); }
+  #stage { width: 1280px; height: 800px; transform-origin: center; border-radius: 22px; overflow: hidden;
+    box-shadow: 0 30px 120px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06); position: relative; }
+  #root { width: 100%; height: 100%; }
+  #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 999;
+    background: rgba(20,12,40,.95); color: #fff; font-family: "Nunito", sans-serif; font-size: 14px;
+    padding: 12px 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,.14); opacity: 0;
+    transition: opacity .25s; pointer-events: none; max-width: 80vw; text-align: center; }
+</style>
+</head>
+<body>
+<div id="stage-wrap"><div id="stage"><div id="root"></div></div></div>
+<div id="toast"></div>
+
+<!-- stage scaling + real-mic bridge (DOM-bound; defines globals used by the React bundle) -->
+<script>
+  (function () {
+    const stage = document.getElementById('stage');
+    function fit() {
+      const s = Math.min(window.innerWidth / 1280, window.innerHeight / 800);
+      stage.style.transform = 'scale(' + s + ')';
+    }
+    window.addEventListener('resize', fit); fit();
+  })();
+  function toast(msg) {
+    const t = document.getElementById('toast'); t.textContent = msg; t.style.opacity = 1;
+    clearTimeout(t._h); t._h = setTimeout(() => (t.style.opacity = 0), 2600);
+  }
+  // Best-effort real ASR. Reading: one-shot -> cb(transcript, confidence).
+  // Spelling: continuous, parse interim transcript into letters -> cb(letter).
+  window.startRealMic = function (cb, isSpelling) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { toast('Speech recognition needs Chrome. Use the demo chips to preview the flow.'); return; }
+    try {
+      const rec = new SR();
+      rec.lang = 'en-US'; rec.interimResults = isSpelling; rec.continuous = isSpelling; rec.maxAlternatives = 1;
+      let emitted = 0; let stopTimer = null;
+      toast(isSpelling ? 'Listening… spell the word out loud' : 'Listening… read the word out loud');
+      rec.onresult = function (e) {
+        if (!isSpelling) {
+          const r = e.results[0][0];
+          cb(r.transcript, r.confidence || 0.9);
+          return;
+        }
+        let transcript = '';
+        for (let i = 0; i < e.results.length; i++) transcript += e.results[i][0].transcript + ' ';
+        const letters = window.PHON.parseLetters(transcript);
+        while (emitted < letters.length) { cb(letters[emitted]); emitted++; }
+        clearTimeout(stopTimer); stopTimer = setTimeout(() => rec.stop(), 1800);
+      };
+      rec.onerror = function (ev) { toast('Mic error: ' + ev.error + '. Use the demo chips instead.'); };
+      rec.start();
+    } catch (err) { toast('Could not start mic. Use the demo chips to preview.'); }
+  };
+</script>
+
+<script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
