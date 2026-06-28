@@ -22,10 +22,23 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 // ── Config: which engine is active + which keys are present (never the keys) ──
+// Friendly names for the curated ElevenLabs voices (so the UI can show who's speaking).
+const VOICE_NAMES = {
+  cgSgspJ2msm6clMCkdW9: 'Jessica',
+  FGY2WhTYpPnrIDTdsKH5: 'Laura',
+  Xb7hH8MSUJpSbSDYk0k2: 'Alice',
+  JBFqnCBsd6RMkjVDRZzb: 'George',
+  EXAVITQu4vr4xnSDxMaL: 'Sarah',
+};
 app.get('/api/config', (_req, res) => {
+  const ttsVoiceId = process.env.ELEVENLABS_VOICE_ID || 'cgSgspJ2msm6clMCkdW9';
   res.json({
     approach: process.env.ACTIVE_APPROACH || 'B',
     textProcessingModel: process.env.TEXT_PROCESSING_MODEL || 'gpt-5.4-nano',
+    realtimeModel: process.env.REALTIME_MODEL || 'gpt-realtime-2',
+    ttsModel: process.env.ELEVENLABS_MODEL || 'eleven_multilingual_v2',
+    ttsVoiceId,
+    ttsVoiceName: VOICE_NAMES[ttsVoiceId] || 'custom',
     wordListMode: process.env.WORD_LIST_MODE || 'mixed',
     keys: {
       openai: !!process.env.OPENAI_API_KEY,
@@ -39,17 +52,27 @@ app.get('/api/config', (_req, res) => {
 // ── Engine A/B: mint an ephemeral OpenAI Realtime session token ──────────────
 // The browser uses this short-lived secret to open the WebRTC session directly;
 // the long-lived key never leaves the server.
+//
+// Current API (2026): POST /v1/realtime/client_secrets with the session config
+// nested under `session` (type/model/audio). This replaced the older
+// /v1/realtime/sessions + flat body + gpt-4o-realtime-preview shape.
+// See https://developers.openai.com/api/docs/guides/realtime-webrtc
 app.post('/api/realtime/session', async (req, res) => {
   if (!process.env.OPENAI_API_KEY) return res.status(400).json({ error: 'OPENAI_API_KEY not configured' });
+  // Caller may pass a full `session` object to override; otherwise sensible current defaults.
+  const session = req.body.session || {
+    type: 'realtime',
+    model: req.body.model || process.env.REALTIME_MODEL || 'gpt-realtime-2',
+    audio: {
+      input: { transcription: { model: req.body.transcribeModel || 'gpt-4o-transcribe' } },
+      output: { voice: req.body.voice || 'marin' },
+    },
+  };
   try {
-    const r = await fetch('https://api.openai.com/v1/realtime/sessions', {
+    const r = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
       method: 'POST',
       headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: req.body.model || 'gpt-4o-realtime-preview',
-        voice: req.body.voice || 'shimmer',
-        input_audio_transcription: { model: 'whisper-1' },
-      }),
+      body: JSON.stringify({ session }),
     });
     if (!r.ok) return res.status(r.status).json({ error: await r.text() });
     res.json(await r.json());
@@ -63,11 +86,21 @@ app.post('/api/realtime/session', async (req, res) => {
 app.post('/api/tts', async (req, res) => {
   if (!process.env.ELEVENLABS_API_KEY) return res.status(400).json({ error: 'ELEVENLABS_API_KEY not configured' });
   try {
-    const { text, voice_id = 'EXAVITQu4vr4xnSDxMaL' } = req.body;
+    const { text } = req.body;
+    // Voice + model are config-driven (ELEVENLABS_VOICE_ID / ELEVENLABS_MODEL), with a
+    // per-request override so the upcoming Voice Lab can audition options. Defaults:
+    // a warm, kid-friendly voice (Jessica) and the life-like multilingual_v2 model.
+    const voice_id = req.body.voice_id || process.env.ELEVENLABS_VOICE_ID || 'cgSgspJ2msm6clMCkdW9';
+    const model_id = req.body.model_id || process.env.ELEVENLABS_MODEL || 'eleven_multilingual_v2';
+    // Clean, clear defaults (stable, no style exaggeration). `speed` (0.7–1.2, <1 = slower)
+    // is merged in so callers can ask for slow, deliberate enunciation — e.g. saying the
+    // word to SPELL. Works on all models including multilingual_v2.
+    const voice_settings = { stability: 0.5, similarity_boost: 0.8, style: 0, use_speaker_boost: true, ...(req.body.voice_settings || {}) };
+    if (req.body.speed != null) voice_settings.speed = Math.max(0.7, Math.min(1.2, req.body.speed));
     const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice_id}`, {
       method: 'POST',
       headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, model_id: 'eleven_turbo_v2_5', voice_settings: { stability: 0.7, similarity_boost: 0.8 } }),
+      body: JSON.stringify({ text, model_id, voice_settings }),
     });
     if (!r.ok) return res.status(r.status).json({ error: await r.text() });
     res.set('Content-Type', 'audio/mpeg');
@@ -75,6 +108,31 @@ app.post('/api/tts', async (req, res) => {
   } catch (e) {
     console.error('[tts] error:', e);
     res.status(500).json({ error: 'TTS failed' });
+  }
+});
+
+// ── Speech-to-text (for the synthetic-speaker test harness) ──────────────────
+// Accepts raw audio bytes and transcribes them via OpenAI. Used by
+// scripts/synthetic-speaker.mjs to "hear" generated ElevenLabs audio as text —
+// automated end-to-end testing of the reading pipeline with no human at the mic.
+// (The live game still hears the child via the browser Web Speech API.)
+app.post('/api/transcribe', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '25mb' }), async (req, res) => {
+  if (!process.env.OPENAI_API_KEY) return res.status(400).json({ error: 'OPENAI_API_KEY not configured' });
+  try {
+    const model = req.query.model || process.env.STT_MODEL || 'gpt-4o-transcribe';
+    const form = new FormData();
+    form.append('file', new Blob([req.body], { type: req.headers['content-type'] || 'audio/mpeg' }), 'audio.mp3');
+    form.append('model', model);
+    const r = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, // fetch sets multipart boundary
+      body: form,
+    });
+    if (!r.ok) return res.status(r.status).json({ error: await r.text() });
+    res.json(await r.json());
+  } catch (e) {
+    console.error('[transcribe] error:', e);
+    res.status(500).json({ error: 'transcription failed' });
   }
 });
 
@@ -88,10 +146,12 @@ app.post('/api/judge', async (req, res) => {
   try {
     if (model.startsWith('gpt')) {
       if (!process.env.OPENAI_API_KEY) return res.status(400).json({ error: 'OPENAI_API_KEY not configured' });
+      // NB: GPT-5-series (e.g. gpt-5.4-nano) only accept the default temperature on
+      // Chat Completions, so we omit it. Determinism comes from the prompt + json_object.
       const r = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages, response_format: { type: 'json_object' }, temperature: 0.1 }),
+        body: JSON.stringify({ model, messages, response_format: { type: 'json_object' } }),
       });
       if (!r.ok) return res.status(r.status).json({ error: await r.text() });
       return res.json(await r.json());
@@ -121,5 +181,9 @@ app.post('/api/judge', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3001;
+// Dedicated backend port (NOT the generic PORT): in dev, `npm run dev` runs Vite
+// and this server side-by-side, and tooling/hosts often inject PORT for the
+// front-end. Using SERVER_PORT keeps the API on a stable port the Vite proxy
+// (vite.config.js → localhost:3001) can always reach.
+const PORT = process.env.SERVER_PORT || 3001;
 app.listen(PORT, () => console.log(`[server] Word Lab backend on http://localhost:${PORT}`));

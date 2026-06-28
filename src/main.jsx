@@ -9,10 +9,13 @@
 import './lib/phonetics.js';
 import './lib/words.js';
 import './lib/engine-profiles.js';
+import './lib/voice.js'; // Bolt's voice: real ElevenLabs TTS (with browser fallback)
+import './lib/judge.js'; // reading evaluation: real OpenAI/Gemini judge (with PHON fallback)
 
 // 2 · arcade kit + screens (attach components to window)
 import './screens/arcade-kit.jsx';
 import './screens/setup-summary.jsx';
+import './screens/voice-lab.jsx';
 import './screens/hud-reading.jsx';
 import './screens/spelling.jsx';
 

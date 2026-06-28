@@ -30,7 +30,7 @@ function Field({ label, hint, children }) {
   );
 }
 
-function SetupScreen({ config, setConfig, onStart }) {
+function SetupScreen({ config, setConfig, onStart, onOpenLab }) {
   const A = window.ARC;
   const set = (k, v) => setConfig((c) => ({ ...c, [k]: v }));
   const lists = window.WORDS.all();
@@ -125,6 +125,10 @@ function SetupScreen({ config, setConfig, onStart }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '18px 0 22px' }}>
           <window.NeonButton color={A.lime} size="lg" onClick={onStart}>Start session  →</window.NeonButton>
           <span style={{ fontFamily: A.ui, fontSize: 13, color: A.faint }}>Chrome · mic permission asked on first word</span>
+          {onOpenLab && (
+            <button className="arc-btn" onClick={onOpenLab} title="Audition and pick Bolt’s voice"
+              style={{ marginLeft: 'auto', background: 'rgba(176,135,255,.14)', border: `2px solid ${A.purple}66`, color: A.purple, borderRadius: 30, padding: '11px 18px', fontFamily: A.ui, fontWeight: 800, fontSize: 14 }}>🎚 Voice Lab</button>
+          )}
         </div>
       </div>
     </window.ArcScreen>
