@@ -1,0 +1,22 @@
+name: CI
+
+# The deterministic gate every routine's PR must pass before a human merges.
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      # Note: `npm run test:voice` is an integration harness that needs API keys + a
+      # running server, so it is intentionally NOT run here. Unit tests + build are
+      # offline and gate every PR.
