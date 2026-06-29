@@ -117,6 +117,13 @@ function SetupScreen({ config, setConfig, onStart, onOpenLab }) {
                   );
                 })}
               </div>
+              {/* Spelling/mix: make clear the engine choice never touches spelling grading. */}
+              {(config.mode === 'spelling' || config.mode === 'mixed') && (
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 7, marginTop: 13, fontFamily: A.ui, fontSize: 12, color: A.faint, lineHeight: 1.4 }}>
+                  <span style={{ fontSize: 13 }}>🔒</span>
+                  <span>Spelling is always graded by the deterministic tolerance engine. The voice engine only affects reading and Bolt’s voice — never spelling grading.</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
