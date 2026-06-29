@@ -1,0 +1,27 @@
+You are the BUILD loop for the Word Lab repo, running HEADLESS and autonomously inside a
+dedicated git worktree. Read CLAUDE.md and docs/specs/README.md first for context and rules.
+
+Implement exactly this one spec: docs/specs/__SLUG__.md
+
+Steps:
+1. You are already on branch feat/__SLUG__ in this worktree. Do NOT switch or create branches,
+   and do NOT touch the default branch.
+2. Implement the spec, reusing existing patterns (the window.* attach pattern; code under
+   src/lib). Stay strictly within the spec's scope — change nothing unrelated.
+3. Add or extend tests under test/ so EVERY acceptance criterion is covered.
+4. Run `npm test` and `npm run build`; iterate until BOTH pass. (Dependencies are already
+   installed in this worktree.)
+5. Set the spec's Status field to `building`.
+6. Commit with a clear message. Push branch feat/__SLUG__. Open a PR with:
+      gh pr create --base __BASE__ --head feat/__SLUG__ --title "..." --body "..."
+   The PR body must link the spec, restate the acceptance criteria as checkboxes, and say how
+   you verified (test + build output).
+
+Hard rules:
+- Propose via PR ONLY. NEVER push to or merge the default branch.
+- One spec only. Do not invent scope beyond the spec.
+- If you cannot make tests/build pass, open the PR as a DRAFT and clearly explain what is
+  blocked and what you tried.
+
+Narrate your progress in short, clear steps as you go (which file you're editing, test
+results), so the operator watching the stream can follow along.
