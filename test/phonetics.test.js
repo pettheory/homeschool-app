@@ -26,6 +26,29 @@ describe('tolerance engine — parseLetters', () => {
   });
 });
 
+describe('tolerance engine — NATO phonetic alphabet', () => {
+  it('parses a NATO word sequence into letters', () => {
+    expect(PHON.parseLetters('alpha bravo charlie')).toEqual(['A', 'B', 'C']);
+  });
+  it('maps a single NATO word to its letter', () => {
+    expect(PHON.spokenToLetter('zulu')).toBe('Z');
+  });
+  it('covers all 26 NATO words', () => {
+    const words = [
+      'alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel',
+      'india', 'juliett', 'kilo', 'lima', 'mike', 'november', 'oscar', 'papa',
+      'quebec', 'romeo', 'sierra', 'tango', 'uniform', 'victor', 'whiskey',
+      'x-ray', 'yankee', 'zulu',
+    ];
+    expect(words.map((w) => PHON.spokenToLetter(w)).join('')).toBe(
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    );
+  });
+  it('mixes NATO words with letter-names and the "X for word" trick', () => {
+    expect(PHON.parseLetters('B for ball, charlie, dee')).toEqual(['B', 'C', 'D']);
+  });
+});
+
 describe('tolerance engine — evalReading', () => {
   it('exact and homophone read as correct', () => {
     expect(PHON.evalReading('cat', 'cat').verdict).toBe('correct');
