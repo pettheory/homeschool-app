@@ -22,6 +22,15 @@ parent/dev configures a session; the child plays mostly hands-free by voice.
   `/api/realtime/session`. Reads keys from `.env`; **never** sends keys to the browser.
 - Config/keys in `.env` (gitignored; template `.env.example`).
 
+## Pedagogy & AI usage (non-negotiable)
+- **Realtime/LLM AI grades READING only.** Reading suits conversational coaching and a small
+  slip is harmless. **SPELLING is always graded by the deterministic tolerance engine** + the
+  sound-alike confirm gate — never by realtime or an LLM. A model that mishears B/P/D and then
+  *asserts* right/wrong mis-teaches and can confuse the child; the deterministic engine never
+  declares a wrong answer, it asks ("did you mean B or P?").
+- In spelling, AI may only **voice Bolt** (TTS) — never evaluate the child's letters. See
+  `docs/specs/realtime-reading-only.md`.
+
 ## Conventions
 - Match the surrounding style; keep the `window.*` attach pattern. Don't add deps without need.
 - Secrets only in `.env`. Never commit keys.
