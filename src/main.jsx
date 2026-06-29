@@ -11,6 +11,7 @@ import './lib/words.js';
 import './lib/engine-profiles.js';
 import './lib/voice.js'; // Bolt's voice: real ElevenLabs TTS (with browser fallback)
 import './lib/judge.js'; // reading evaluation: real OpenAI/Gemini judge (with PHON fallback)
+import './lib/eval-policy.js'; // per-mode AI policy: AI may grade reading only, never spelling
 
 // 2 · arcade kit + screens (attach components to window)
 import './screens/arcade-kit.jsx';

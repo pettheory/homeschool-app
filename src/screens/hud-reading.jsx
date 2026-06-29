@@ -202,7 +202,12 @@ function ReadingScreen({ word, config, hud, onResult }) {
     // Engine C's evaluator: kick the real LLM judge off NOW so it overlaps the
     // simulated think beat. PHON stays the authority + fallback; we keep whichever
     // verdict is more forgiving. No key / error / timeout → tolerance engine only.
-    const judgeP = (window.Judge && window.Judge.state.available && text)
+    //
+    // Guardrail: the AI judge may only ever grade READING. window.EvalPolicy is the
+    // single source of truth for that rule (spelling stays deterministic — see
+    // src/lib/eval-policy.js). This is the reading screen, so we ask for 'reading'.
+    const aiAllowed = !!(window.EvalPolicy && window.EvalPolicy.usesAIJudge('reading'));
+    const judgeP = (aiAllowed && window.Judge && window.Judge.state.available && text)
       ? window.Judge.evalReading(word.word, text).catch(() => null)
       : null;
 
