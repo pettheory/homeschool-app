@@ -15,6 +15,9 @@ export default function App() {
   const [results, setResults] = useState([]);
 
   function start() {
+    // This runs inside the Start-session click — prime audio so the first ElevenLabs
+    // clip isn't autoplay-blocked and silently downgraded to the browser voice.
+    if (window.VoiceEngine && window.VoiceEngine.unlock) window.VoiceEngine.unlock();
     const list = window.WORDS.list(config.listId);
     const words = list.words.slice(0, config.length);
     const q = words.map((w, i) => ({
@@ -35,7 +38,8 @@ export default function App() {
     else setIndex((i) => i + 1);
   }
 
-  if (screen === 'setup') return <window.SetupScreen config={config} setConfig={setConfig} onStart={start} />;
+  if (screen === 'setup') return <window.SetupScreen config={config} setConfig={setConfig} onStart={start} onOpenLab={() => setScreen('voicelab')} />;
+  if (screen === 'voicelab') return <window.VoiceLabScreen onBack={() => setScreen('setup')} />;
   if (screen === 'summary') return <window.SummaryScreen results={results} config={config} onReplay={start} onSetup={() => setScreen('setup')} />;
 
   const cur = queue[index];

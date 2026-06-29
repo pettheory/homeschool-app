@@ -3,8 +3,10 @@
    tolerant-feedback state machine. Exports to window. */
 import React from 'react';
 
-// ── Browser TTS so Bolt actually speaks (flavour only; the state machine
-// advances on its own timers so async voice loading can never stall it). ──
+// ── Bolt's voice. Delegates to window.VoiceEngine (real ElevenLabs TTS when a
+// key is configured, browser SpeechSynthesis otherwise — see src/lib/voice.js).
+// A tiny inline browser fallback remains in case voice.js failed to load. The
+// state machine advances on its own timers, so async voice can never stall it. ──
 window.__soundOn = window.__soundOn !== false;
 let _voice = null;
 function _pickVoice() {
@@ -15,8 +17,10 @@ function _pickVoice() {
   } catch (e) {}
 }
 if (typeof speechSynthesis !== 'undefined') { _pickVoice(); speechSynthesis.onvoiceschanged = _pickVoice; }
-function say(text, { rate = 0.96, pitch = 1.12 } = {}) {
+function say(text, opts = {}) {
   if (!window.__soundOn) return;
+  if (window.VoiceEngine) { window.VoiceEngine.speak(text, opts); return; }
+  const { rate = 0.96, pitch = 1.12 } = opts; // fallback if voice.js absent
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
@@ -49,6 +53,8 @@ function HUD({ streak, stars, voiceState, index, total, onExit }) {
           <svg width="20" height="20" viewBox="0 0 24 24"><polygon points="12,2 15,9 22.5,9.5 16.5,14.5 18.5,22 12,17.5 5.5,22 7.5,14.5 1.5,9.5 9,9" fill={A.gold} /></svg>
           <span style={{ fontFamily: A.display, fontWeight: 600, fontSize: 18, color: A.gold }}>{stars}</span>
         </div>
+        {/* which voice is actually playing (ElevenLabs vs browser fallback) */}
+        <VoiceSourceChip />
         {/* sound toggle */}
         <SoundToggle />
         {/* progress + exit */}
@@ -64,11 +70,37 @@ function HUD({ streak, stars, voiceState, index, total, onExit }) {
   );
 }
 
+// Shows who is actually speaking — real ElevenLabs voice vs the browser fallback.
+// Subscribes to VoiceEngine so a silent autoplay→browser downgrade is visible, not hidden.
+function VoiceSourceChip() {
+  const A = window.ARC;
+  const ve = window.VoiceEngine;
+  const [, bump] = React.useState(0);
+  React.useEffect(() => {
+    if (!ve || !ve.subscribe) return;
+    return ve.subscribe(() => bump((n) => n + 1));
+  }, []);
+  if (!ve) return null;
+  const s = ve.state;
+  const usingEleven = s.lastSource ? s.lastSource === 'elevenlabs' : s.useEleven;
+  const fellBack = s.useEleven && s.lastSource === 'browser'; // intended ElevenLabs, got browser
+  const label = usingEleven ? `${s.voiceName || 'ElevenLabs'}` : 'Browser voice';
+  const color = fellBack ? A.gold : usingEleven ? A.cyan : A.faint;
+  return (
+    <div title={fellBack
+      ? 'ElevenLabs was blocked or failed — using the browser voice. Reload after clicking, or check the key.'
+      : (usingEleven ? `Bolt: real ElevenLabs voice (${s.model || ''})` : 'Bolt: browser speech synthesis')}
+      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 40, background: 'rgba(255,255,255,.06)', border: `2px solid ${color}55`, fontFamily: A.ui, fontWeight: 700, fontSize: 12.5, color }}>
+      <span style={{ fontSize: 13 }}>{fellBack ? '⚠️' : '🗣'}</span> {label}
+    </div>
+  );
+}
+
 function SoundToggle() {
   const A = window.ARC;
   const [on, setOn] = React.useState(window.__soundOn);
   return (
-    <button className="arc-btn" onClick={() => { window.__soundOn = !on; if (on) try { speechSynthesis.cancel(); } catch (e) {} setOn(!on); }}
+    <button className="arc-btn" onClick={() => { window.__soundOn = !on; if (on) { try { (window.VoiceEngine ? window.VoiceEngine.cancel() : speechSynthesis.cancel()); } catch (e) {} } setOn(!on); }}
       title={on ? 'Mute Bolt' : 'Unmute Bolt'}
       style={{ width: 38, height: 38, borderRadius: 19, background: on ? 'rgba(45,226,230,.14)' : 'rgba(255,255,255,.06)', border: `2px solid ${on ? A.cyan + '55' : A.cardBorder}`, color: on ? A.cyan : A.faint, fontSize: 16 }}>
       {on ? '🔊' : '🔇'}
@@ -131,31 +163,56 @@ function ReadingScreen({ word, config, hud, onResult }) {
   const [demoOpen, setDemoOpen] = React.useState(true);
   const [latency, setLatency] = React.useState(null);
   const timer = React.useRef(null);
+  const alive = React.useRef(true); // guards async (LLM judge) state updates across word changes
   const set = (fn, ms) => { clearTimeout(timer.current); timer.current = setTimeout(fn, ms); };
 
   React.useEffect(() => {
+    alive.current = true;
     setPhase('intro'); setVerdict(null); setHeard(''); setShowHint(false);
     say('Can you read this word for me?');
     set(() => setPhase('listen'), 1500);
-    return () => clearTimeout(timer.current);
+    return () => { alive.current = false; clearTimeout(timer.current); };
   }, [word.word]);
 
   const voiceState = phase === 'intro' ? 'speak' : phase === 'listen' ? 'listen' : phase === 'think' ? 'think' : 'idle';
 
+  // forgiveness shaping — applied to BOTH the tolerance-engine and LLM verdicts
+  // so the setup's sensitivity knob still governs the final outcome.
+  const shape = (v) => {
+    if (config.sensitivity === 'forgiving') {
+      if (v.verdict === 'incorrect') {
+        const sim = 1 - window.PHON.lev(window.PHON.norm(word.word), window.PHON.norm(heardText)) / Math.max(word.word.length, 1);
+        if (sim >= 0.4) return { verdict: 'unclear', reason: 'ambiguous' };
+      }
+    } else if (config.sensitivity === 'strict') {
+      if (v.verdict === 'close') return { verdict: 'unclear', reason: 'confirm' };
+    }
+    return v;
+  };
+  let heardText = ''; // bound per inject() so shape() can recompute similarity
+
   function inject(text, conf) {
     if (phase !== 'listen') return;
+    heardText = text;
     setHeard(text);
     setPhase('think');
     const wait = window.ENGINES.evalLatency(config.approach); // engine-specific think beat
     setLatency(wait);
-    set(() => {
-      let v = window.PHON.evalReading(word.word, text, conf);
-      // forgiveness shaping
-      if (config.sensitivity === 'forgiving') {
-        if (v.verdict === 'incorrect') { const sim = 1 - window.PHON.lev(window.PHON.norm(word.word), window.PHON.norm(text)) / Math.max(word.word.length, 1); if (sim >= 0.4) v = { verdict: 'unclear', reason: 'ambiguous' }; }
-      } else if (config.sensitivity === 'strict') {
-        if (v.verdict === 'close') v = { verdict: 'unclear', reason: 'confirm' };
+
+    // Engine C's evaluator: kick the real LLM judge off NOW so it overlaps the
+    // simulated think beat. PHON stays the authority + fallback; we keep whichever
+    // verdict is more forgiving. No key / error / timeout → tolerance engine only.
+    const judgeP = (window.Judge && window.Judge.state.available && text)
+      ? window.Judge.evalReading(word.word, text).catch(() => null)
+      : null;
+
+    set(async () => {
+      let v = shape(window.PHON.evalReading(word.word, text, conf)); // baseline (authority)
+      if (judgeP) {
+        const llm = await judgeP;
+        if (llm && llm.verdict) v = window.Judge.moreForgiving(v, shape(llm));
       }
+      if (!alive.current) return; // word changed while awaiting the judge
       setVerdict(v); setPhase('result');
       if (v.verdict === 'correct') say('Yes! Perfect reading!');
       else if (v.verdict === 'close') say('That counts! Nicely done.');
@@ -175,7 +232,7 @@ function ReadingScreen({ word, config, hud, onResult }) {
     <window.ArcScreen>
       <HUD {...hud} voiceState={voiceState} />
       <div style={{ position: 'absolute', top: 72, left: 26, zIndex: 25 }}>
-        <window.EngineBadge approach={config.approach} lastLatency={phase === 'think' ? null : latency} note={phase === 'think' ? 'evaluating…' : undefined} />
+        <window.EngineBadge approach={config.approach} lastLatency={phase === 'think' ? null : latency} note={phase === 'think' ? ((window.Judge && window.Judge.state.available) ? `judge · ${window.Judge.state.model}` : 'evaluating…') : undefined} />
       </div>
 
       <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '90px 40px 120px' }}>

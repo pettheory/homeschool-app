@@ -40,30 +40,60 @@
     clearTimeout(t._h); t._h = setTimeout(() => (t.style.opacity = 0), 2600);
   }
   // Best-effort real ASR. Reading: one-shot -> cb(transcript, confidence).
-  // Spelling: continuous, parse interim transcript into letters -> cb(letter).
+  // Spelling: CONTINUOUS — stays hot across pauses by auto-restarting the recognizer
+  // on `onend` (Chrome ends a session after a few seconds of silence). Returns a
+  // controller { stop() } and stashes it on window.__micCtl so the screen can stop it.
   window.startRealMic = function (cb, isSpelling) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { toast('Speech recognition needs Chrome. Use the demo chips to preview the flow.'); return; }
-    try {
-      const rec = new SR();
-      rec.lang = 'en-US'; rec.interimResults = isSpelling; rec.continuous = isSpelling; rec.maxAlternatives = 1;
-      let emitted = 0; let stopTimer = null;
-      toast(isSpelling ? 'Listening… spell the word out loud' : 'Listening… read the word out loud');
-      rec.onresult = function (e) {
-        if (!isSpelling) {
-          const r = e.results[0][0];
-          cb(r.transcript, r.confidence || 0.9);
-          return;
-        }
-        let transcript = '';
-        for (let i = 0; i < e.results.length; i++) transcript += e.results[i][0].transcript + ' ';
-        const letters = window.PHON.parseLetters(transcript);
-        while (emitted < letters.length) { cb(letters[emitted]); emitted++; }
-        clearTimeout(stopTimer); stopTimer = setTimeout(() => rec.stop(), 1800);
-      };
-      rec.onerror = function (ev) { toast('Mic error: ' + ev.error + '. Use the demo chips instead.'); };
-      rec.start();
-    } catch (err) { toast('Could not start mic. Use the demo chips to preview.'); }
+    if (!SR) { toast('Speech recognition needs Chrome. Use the demo chips to preview the flow.'); return null; }
+    if (window.__micCtl) { try { window.__micCtl.stop(); } catch (e) {} } // only one mic at a time
+
+    let active = true;   // false once stopped or fatally errored
+    let emitted = 0;     // letters emitted from the CURRENT recognition session
+    let startedAt = 0;   // when the current session started (ms)
+    let quickFails = 0;  // consecutive near-instant ends → mic broken/denied
+    const rec = new SR();
+    rec.lang = 'en-US'; rec.interimResults = isSpelling; rec.continuous = isSpelling; rec.maxAlternatives = 1;
+
+    function safeStart() {
+      try { startedAt = Date.now(); rec.start(); }
+      catch (e) { setTimeout(() => { if (active) { try { startedAt = Date.now(); rec.start(); } catch (e2) {} } }, 250); }
+    }
+
+    rec.onresult = function (e) {
+      if (!isSpelling) { const r = e.results[0][0]; cb(r.transcript, r.confidence || 0.9); return; }
+      quickFails = 0; // we're hearing audio
+      let transcript = '';
+      for (let i = 0; i < e.results.length; i++) transcript += e.results[i][0].transcript + ' ';
+      const letters = window.PHON.parseLetters(transcript);
+      while (emitted < letters.length) { cb(letters[emitted]); emitted++; }
+    };
+    rec.onerror = function (ev) {
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+        active = false; toast('Mic permission blocked. Use the demo chips instead.');
+      }
+      // no-speech / aborted / network → let onend decide whether to restart
+    };
+    rec.onend = function () {
+      // Reading is one-shot; spelling keeps the mic hot.
+      if (!isSpelling || !active) { active = false; if (window.__micCtl === ctl) window.__micCtl = null; return; }
+      // Bail out if the recognizer keeps dying instantly (broken/denied mic) instead of looping forever.
+      if (Date.now() - startedAt < 500) {
+        if (++quickFails >= 5) { active = false; toast('Mic keeps dropping — use the demo chips.'); if (window.__micCtl === ctl) window.__micCtl = null; return; }
+      } else { quickFails = 0; }
+      emitted = 0; // fresh session: results index resets, letters keep appending
+      safeStart();
+    };
+
+    const ctl = {
+      stop() { active = false; try { rec.stop(); } catch (e) {} if (window.__micCtl === ctl) window.__micCtl = null; },
+      get active() { return active; },
+    };
+
+    toast(isSpelling ? 'Listening… spell out loud (mic stays on)' : 'Listening… read the word out loud');
+    safeStart();
+    window.__micCtl = ctl;
+    return ctl;
   };
 </script>
 
