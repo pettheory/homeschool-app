@@ -1,7 +1,7 @@
 # Realtime/LLM grades reading only — spelling stays deterministic
 
 - **Slug:** realtime-reading-only
-- **Status:** building   <!-- draft → ready → building → done -->
+- **Status:** done   <!-- draft → ready → building → done -->
 - **Owner:** dnichol
 
 ## Problem / why
