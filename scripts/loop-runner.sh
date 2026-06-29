@@ -34,6 +34,14 @@ else
   ( cd "$WT" && { npm ci || npm install; } ) >"$DEPS" 2>&1 || log "WARN: dependency install reported errors"
 fi
 
+# Mint a short-lived GitHub token so the loop's gh CLI calls (e.g. gh pr create) work without
+# touching the global gh account; git itself authenticates via the AC credential helper.
+# Valid ~1h — ample for a single loop run. No-op if the helper isn't set up.
+if [ -f "$ROOT/scripts/ac-credential-helper.sh" ]; then
+  GH_TOKEN="$(printf 'protocol=https\nhost=github.com\n\n' | bash "$ROOT/scripts/ac-credential-helper.sh" get | sed -n 's/^password=//p')"
+  if [ -n "$GH_TOKEN" ]; then export GH_TOKEN; log "minted GH_TOKEN for the loop's gh calls"; else log "WARN: GH_TOKEN mint failed — gh calls may fail"; fi
+fi
+
 log "launching: claude -p (headless, --permission-mode bypassPermissions)"
 ( cd "$WT" && claude -p "$PROMPT" --output-format stream-json --verbose --permission-mode bypassPermissions ) >>"$STREAM" 2>&1
 log "claude exited $?"
