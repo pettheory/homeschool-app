@@ -55,11 +55,23 @@
     tee: 'T', tea: 'T', you: 'U', vee: 'V', ve: 'V', 'double-u': 'W', 'double-you': 'W',
     ex: 'X', wy: 'Y', why: 'Y', zee: 'Z', zed: 'Z',
   };
+  // NATO phonetic alphabet — an unambiguous way to spell letters by voice
+  // ("alpha bravo charlie" → A B C). No collisions with WORD_TO_LETTER, so
+  // spokenToLetter can consult both. Includes common spelling variants
+  // (juliet, xray/x-ray, whisky) the ASR may return.
+  const NATO_TO_LETTER = {
+    alpha: 'A', bravo: 'B', charlie: 'C', delta: 'D', echo: 'E', foxtrot: 'F',
+    golf: 'G', hotel: 'H', india: 'I', juliett: 'J', juliet: 'J', kilo: 'K',
+    lima: 'L', mike: 'M', november: 'N', oscar: 'O', papa: 'P', quebec: 'Q',
+    romeo: 'R', sierra: 'S', tango: 'T', uniform: 'U', victor: 'V',
+    whiskey: 'W', whisky: 'W', 'x-ray': 'X', xray: 'X', yankee: 'Y', zulu: 'Z',
+  };
   function spokenToLetter(tok) {
     if (!tok) return null;
     const t = tok.trim().toLowerCase().replace(/[^a-z-]/g, '');
     if (t.length === 1 && /[a-z]/.test(t)) return t.toUpperCase();
     if (WORD_TO_LETTER[t]) return WORD_TO_LETTER[t];
+    if (NATO_TO_LETTER[t]) return NATO_TO_LETTER[t];
     return null;
   }
   // Parse a free-text transcript ("B for ball, U, double-u…") into letters,

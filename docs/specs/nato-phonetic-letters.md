@@ -1,7 +1,7 @@
 # NATO phonetic alphabet for spelling letters
 
 - **Slug:** nato-phonetic-letters
-- **Status:** ready   <!-- draft → ready → building → done -->
+- **Status:** building   <!-- draft → ready → building → done -->
 - **Owner:** dnichol
 
 ## Problem / why
