@@ -39,10 +39,31 @@
     const t = document.getElementById('toast'); t.textContent = msg; t.style.opacity = 1;
     clearTimeout(t._h); t._h = setTimeout(() => (t.style.opacity = 0), 2600);
   }
+  // ── Mic debug stream: every recognition event (interim/final/emit/restart/error)
+  // is recorded to window.__micEvents and broadcast as a 'miclog' CustomEvent, so the
+  // on-screen Mic Console (and DevTools) can show in real time what the mic heard vs
+  // what letters were emitted. Ring-buffered; also mirrored to console.debug('[mic]').
+  window.__micEvents = window.__micEvents || [];
+  function micLog(kind, detail) {
+    try {
+      const evt = { t: Date.now(), kind, detail: String(detail) };
+      window.__micEvents.push(evt);
+      if (window.__micEvents.length > 400) window.__micEvents.splice(0, 200);
+      console.debug('[mic]', kind, detail);
+      window.dispatchEvent(new CustomEvent('miclog', { detail: evt }));
+    } catch (e) {}
+  }
+
   // Best-effort real ASR. Reading: one-shot -> cb(transcript, confidence).
   // Spelling: CONTINUOUS — stays hot across pauses by auto-restarting the recognizer
   // on `onend` (Chrome ends a session after a few seconds of silence). Returns a
   // controller { stop() } and stashes it on window.__micCtl so the screen can stop it.
+  //
+  // Letters are emitted from FINAL results only: interim text is unstable (it mutates
+  // as the recognizer settles), and parsing it caused letters to appear late or wrong —
+  // e.g. "B" popping up only after the child said "E". Final-only costs a short beat
+  // (Chrome finalizes on a brief pause) but every letter lands once, correctly ordered.
+  // Interim text still streams to the Mic Console for visibility.
   window.startRealMic = function (cb, isSpelling) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { toast('Speech recognition needs Chrome. Use the demo chips to preview the flow.'); return null; }
@@ -61,14 +82,25 @@
     }
 
     rec.onresult = function (e) {
-      if (!isSpelling) { const r = e.results[0][0]; cb(r.transcript, r.confidence || 0.9); return; }
+      if (!isSpelling) {
+        const r = e.results[0][0];
+        micLog('final', `"${r.transcript}" (conf ${(r.confidence || 0).toFixed(2)})`);
+        cb(r.transcript, r.confidence || 0.9);
+        return;
+      }
       quickFails = 0; // we're hearing audio
-      let transcript = '';
-      for (let i = 0; i < e.results.length; i++) transcript += e.results[i][0].transcript + ' ';
-      const letters = window.PHON.parseLetters(transcript);
-      while (emitted < letters.length) { cb(letters[emitted]); emitted++; }
+      let finalText = '', interimText = '';
+      for (let i = 0; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
+        else interimText += e.results[i][0].transcript + ' ';
+      }
+      if (interimText.trim()) micLog('interim', interimText.trim());
+      const letters = window.PHON.parseLetters(finalText);
+      if (finalText.trim()) micLog('final', `"${finalText.trim()}" → letters [${letters.join(' ')}]`);
+      while (emitted < letters.length) { micLog('emit', letters[emitted]); cb(letters[emitted]); emitted++; }
     };
     rec.onerror = function (ev) {
+      micLog('error', ev.error);
       if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
         active = false; toast('Mic permission blocked. Use the demo chips instead.');
       }
@@ -76,12 +108,13 @@
     };
     rec.onend = function () {
       // Reading is one-shot; spelling keeps the mic hot.
-      if (!isSpelling || !active) { active = false; if (window.__micCtl === ctl) window.__micCtl = null; return; }
+      if (!isSpelling || !active) { active = false; if (window.__micCtl === ctl) window.__micCtl = null; micLog('stop', 'mic off'); return; }
       // Bail out if the recognizer keeps dying instantly (broken/denied mic) instead of looping forever.
       if (Date.now() - startedAt < 500) {
-        if (++quickFails >= 5) { active = false; toast('Mic keeps dropping — use the demo chips.'); if (window.__micCtl === ctl) window.__micCtl = null; return; }
+        if (++quickFails >= 5) { active = false; toast('Mic keeps dropping — use the demo chips.'); if (window.__micCtl === ctl) window.__micCtl = null; micLog('stop', 'gave up (mic keeps dropping)'); return; }
       } else { quickFails = 0; }
       emitted = 0; // fresh session: results index resets, letters keep appending
+      micLog('restart', 'recognizer session ended — restarting (mic stays hot)');
       safeStart();
     };
 

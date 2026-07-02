@@ -84,7 +84,12 @@ function VoiceSourceChip() {
   const s = ve.state;
   const usingEleven = s.lastSource ? s.lastSource === 'elevenlabs' : s.useEleven;
   const fellBack = s.useEleven && s.lastSource === 'browser'; // intended ElevenLabs, got browser
-  const label = usingEleven ? `${s.voiceName || 'ElevenLabs'}` : 'Browser voice';
+  // Short model tag so "which model is playing?" is visible at a glance; a Voice Lab
+  // pick (override) beats the .env default, so flag it when active.
+  const modelTag = ({ eleven_v3: 'v3', eleven_multilingual_v2: 'v2', eleven_turbo_v2_5: 'turbo', eleven_flash_v2_5: 'flash' })[s.model] || (s.model || '').replace(/^eleven_/, '');
+  const label = usingEleven
+    ? `${s.voiceName || 'ElevenLabs'}${modelTag ? ' · ' + modelTag : ''}${s.override ? ' (Lab)' : ''}`
+    : 'Browser voice';
   const color = fellBack ? A.gold : usingEleven ? A.cyan : A.faint;
   return (
     <div title={fellBack

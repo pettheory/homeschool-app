@@ -102,11 +102,18 @@
     if (state.audio) { try { state.audio.pause(); } catch (e) {} state.audio = null; }
   }
 
+  // SSML <break time="Xs"/> tags pace ElevenLabs speech (e.g. the spelling prompt).
+  // The server adapts them per model (v3 → audio tags); the browser fallback voice
+  // would read them aloud, so strip them here for that path only.
+  function stripBreaks(text, replacement) {
+    return String(text).replace(/<break[^>]*\/>/gi, replacement);
+  }
+
   function browserSay(text, opts = {}) {
     setSource('browser');
     try {
       speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
+      const u = new SpeechSynthesisUtterance(stripBreaks(text, ', '));
       if (state.browserVoice) u.voice = state.browserVoice;
       // opts.speed (ElevenLabs scale ~0.7–1.2) maps onto the browser rate so "say it
       // slowly" works in the fallback path too.
@@ -119,7 +126,7 @@
   async function elevenSay(text, opts = {}) {
     cancel(); // never overlap utterances
     const ov = state.override || {};
-    const body = { text };
+    const body = { text }; // server adapts <break> markup to the final model's dialect
     if (ov.voice_id) body.voice_id = ov.voice_id;
     if (ov.model_id) body.model_id = ov.model_id;
     if (opts.speed != null) body.speed = opts.speed; // slow, deliberate enunciation

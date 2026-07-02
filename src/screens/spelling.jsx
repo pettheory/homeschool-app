@@ -19,6 +19,40 @@ function deriveTileStates(target, tiles) {
   return { states, hasMissing, verdict: res.verdict, ops: res.ops };
 }
 
+// ── Mic Console — live debug stream of what the mic actually heard ──────────
+// Subscribes to the 'miclog' events emitted by startRealMic (index.html): interim
+// text (unstable, faint), final text + parsed letters (cyan), emitted letters (lime),
+// restarts (gold), errors (pink). This is the ground truth for "why did/didn't that
+// letter appear?". Parent/dev-facing; toggled with the 🐞 button.
+function MicConsole() {
+  const A = window.ARC;
+  const [events, setEvents] = React.useState(() => (window.__micEvents || []).slice(-40));
+  const boxRef = React.useRef(null);
+  React.useEffect(() => {
+    const on = (e) => setEvents((prev) => [...prev.slice(-80), e.detail]);
+    window.addEventListener('miclog', on);
+    return () => window.removeEventListener('miclog', on);
+  }, []);
+  React.useEffect(() => { const b = boxRef.current; if (b) b.scrollTop = b.scrollHeight; }, [events]);
+  const colors = { interim: A.faint, final: A.cyan, emit: A.lime, restart: A.gold, error: A.pink, stop: A.pink };
+  return (
+    <div style={{ position: 'absolute', top: 118, right: 20, width: 330, maxHeight: '52%', zIndex: 45, display: 'flex', flexDirection: 'column', background: 'rgba(10,6,24,.92)', border: `2px solid ${A.cardBorder}`, borderRadius: 14, boxShadow: '0 10px 34px rgba(0,0,0,.45)' }}>
+      <div style={{ fontFamily: A.ui, fontWeight: 800, fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', color: A.faint, padding: '8px 12px 4px' }}>
+        🐞 Mic console — heard vs emitted
+      </div>
+      <div ref={boxRef} style={{ overflowY: 'auto', padding: '2px 12px 10px', fontFamily: 'ui-monospace, monospace', fontSize: 11, lineHeight: 1.5 }}>
+        {events.length === 0 && <div style={{ color: A.faint }}>No mic events yet — click “🎤 Use mic” and speak.</div>}
+        {events.map((e, i) => (
+          <div key={i} style={{ color: colors[e.kind] || '#fff', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            <span style={{ opacity: .55 }}>{new Date(e.t).toLocaleTimeString([], { hour12: false })} </span>
+            <b>{e.kind}</b> {e.detail}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SpellingScreen({ word, config, hud, onResult }) {
   const A = window.ARC;
   const target = word.word.toUpperCase();
@@ -32,17 +66,28 @@ function SpellingScreen({ word, config, hud, onResult }) {
   const [demoOpen, setDemoOpen] = React.useState(true);
   const [latency, setLatency] = React.useState(null);
   const [micOn, setMicOn] = React.useState(false);
+  const [micDebug, setMicDebug] = React.useState(false);
   const timers = React.useRef([]);
   const tilesRef = React.useRef([]);
   tilesRef.current = tiles;
   const clearTimers = () => { timers.current.forEach(clearTimeout); timers.current = []; };
   const after = (fn, ms) => { const t = setTimeout(fn, ms); timers.current.push(t); return t; };
 
+  // Spelling-bee style prompt: ONE utterance with <break> markup so nothing gets
+  // cancelled mid-play (each ttsSay cancels the previous clip), the word is repeated,
+  // and pacing comes from pauses — not from an extreme speed value, which degrades
+  // ElevenLabs quality near the 0.7 floor. voice.js adapts the markup for v3/browser.
+  const sayWordSlowly = (intro) => {
+    const w = word.word;
+    const syl = word.syllables && word.syllables.length > 1 ? ` <break time="0.6s" /> ${word.syllables.join(' — ')}.` : '';
+    const text = `${intro ? 'Spell the word… <break time="0.6s" /> ' : ''}${w}.${syl} <break time="0.8s" /> ${w}.`;
+    window.ttsSay && window.ttsSay(text, { speed: 0.9 });
+  };
+
   React.useEffect(() => {
     setPhase('intro'); setTiles([]); setVerdict(null); setTileStates([]); setSuspects([]); setFixIndex(null); setRevealed(false);
-    window.ttsSay && window.ttsSay('Spell the word…');
-    after(() => { window.ttsSay && window.ttsSay(word.word, { speed: 0.75 }); }, 900);
-    after(() => setPhase('spell'), 2100);
+    sayWordSlowly(true);
+    after(() => setPhase('spell'), 2400);
     return () => { try { window.__micCtl && window.__micCtl.stop(); } catch (e) {} clearTimers(); };
   }, [word.word]);
 
@@ -177,7 +222,7 @@ function SpellingScreen({ word, config, hud, onResult }) {
         {/* picture clue (shown from the start) + replay */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 22 }}>
           <window.PictureClue label={word.picture} size={132} />
-          <button className="arc-btn" onClick={() => window.ttsSay && window.ttsSay(word.word, { speed: 0.75 })}
+          <button className="arc-btn" onClick={() => sayWordSlowly(false)}
             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'rgba(45,226,230,.12)', border: `2px solid ${A.cyan}55`, borderRadius: 18, padding: '16px 18px', color: A.cyan }}>
             <span style={{ fontSize: 30 }}>🔊</span>
             <span style={{ fontFamily: A.ui, fontWeight: 800, fontSize: 13 }}>Hear it again</span>
@@ -210,9 +255,14 @@ function SpellingScreen({ word, config, hud, onResult }) {
             <window.NeonButton color={A.pink} variant="outline" size="sm" onClick={startOver}>↺ Start over</window.NeonButton>
             <window.NeonButton color={A.gold} variant="outline" size="sm" onClick={undoLetter}>⌫ Undo letter</window.NeonButton>
             <window.NeonButton color={A.lime} size="sm" onClick={() => evaluate()} disabled={!tiles.length}>✓ I’m done</window.NeonButton>
+            <button className="arc-btn" onClick={() => setMicDebug(!micDebug)} title="Live mic debug stream — what the recognizer heard vs which letters were emitted"
+              style={{ background: micDebug ? 'rgba(255,210,63,.16)' : 'rgba(255,255,255,.05)', border: `2px solid ${micDebug ? A.gold + '66' : A.cardBorder}`, color: micDebug ? A.gold : A.faint, borderRadius: 30, padding: '8px 13px', fontSize: 13 }}>🐞</button>
           </div>
         )}
       </div>
+
+      {/* live mic debug stream (parent/dev) */}
+      {micDebug && <MicConsole />}
 
       {/* confirm gate */}
       {phase === 'confirm' && (
@@ -264,7 +314,7 @@ function SpellingScreen({ word, config, hud, onResult }) {
             <window.NeonButton color={A.cyan} size="lg" onClick={() => finish('incorrect', 0, true)}>Next word →</window.NeonButton>
           ) : (<>
             <window.NeonButton color={A.gold} onClick={beginFix}>🔧 Fix the tricky letter</window.NeonButton>
-            <window.NeonButton color={A.cyan} variant="outline" onClick={() => { window.ttsSay && window.ttsSay(word.word, { speed: 0.75 }); startOver(); }}>🔊 Hear it & retry</window.NeonButton>
+            <window.NeonButton color={A.cyan} variant="outline" onClick={() => { sayWordSlowly(false); startOver(); }}>🔊 Hear it & retry</window.NeonButton>
             <window.NeonButton color={A.pink} variant="outline" onClick={() => { setRevealed(true); setTileStates(target.split('').map(() => 'fixed')); setTiles(target.split('')); }}>Show me the word</window.NeonButton>
           </>)} />
       )}
