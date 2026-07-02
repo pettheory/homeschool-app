@@ -34,7 +34,7 @@ function MicConsole() {
     return () => window.removeEventListener('miclog', on);
   }, []);
   React.useEffect(() => { const b = boxRef.current; if (b) b.scrollTop = b.scrollHeight; }, [events]);
-  const colors = { interim: A.faint, final: A.cyan, emit: A.lime, restart: A.gold, error: A.pink, stop: A.pink };
+  const colors = { interim: A.faint, final: A.cyan, emit: A.lime, restart: A.gold, error: A.pink, stop: A.pink, capture: A.purple };
   return (
     <div style={{ position: 'absolute', top: 118, right: 20, width: 330, maxHeight: '52%', zIndex: 45, display: 'flex', flexDirection: 'column', background: 'rgba(10,6,24,.92)', border: `2px solid ${A.cardBorder}`, borderRadius: 14, boxShadow: '0 10px 34px rgba(0,0,0,.45)' }}>
       <div style={{ fontFamily: A.ui, fontWeight: 800, fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', color: A.faint, padding: '8px 12px 4px' }}>
@@ -99,7 +99,13 @@ function SpellingScreen({ word, config, hud, onResult }) {
   // Real mic: stays continuously hot (see window.startRealMic in index.html), feeding
   // letters via pushLetter. startRealMic auto-stops any prior session, so restarting
   // (e.g. on "start over") gives a fresh transcript so letters don't double up.
-  const startMic = () => { const ctl = window.startRealMic && window.startRealMic((L) => pushLetter(L), true); setMicOn(!!ctl); };
+  // When the Mic Console is armed (🐞 open), pass a capture context so startRealMic
+  // also records this session's audio for later replay. OFF otherwise (child's voice).
+  const startMic = () => {
+    const cap = { armed: micDebug, word: word.word, getTiles: () => tilesRef.current };
+    const ctl = window.startRealMic && window.startRealMic((L) => pushLetter(L), true, cap);
+    setMicOn(!!ctl);
+  };
   const stopMic = () => { try { window.__micCtl && window.__micCtl.stop(); } catch (e) {} setMicOn(false); };
   const startOver = () => { clearTimers(); setTiles([]); setPhase('spell'); window.ttsSay && window.ttsSay('No problem — from the top!'); if (micOn) startMic(); };
 

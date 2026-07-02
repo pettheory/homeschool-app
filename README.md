@@ -120,6 +120,50 @@ where speech→text→judge drifts. Edit the `CASES` array to add words/utteranc
 (The live game still hears the child via the browser Web Speech API; this harness
 uses a server STT so it can run headless, validating the judge + speech realism.)
 
+### Session capture & replay (real-mic bug reproduction)
+
+Mic bugs (a missed or late letter) vanish the moment they happen — the audio and
+recognizer events are gone before you can look. **Session capture** saves them so a
+failure can be analysed after the fact, replayed through the server STT, and promoted
+into a regression test.
+
+> **Privacy (non-negotiable): a child's voice never leaves this machine.** Capture is
+> **OFF by default**. It only records when a parent/dev has **armed the Mic Console**
+> (the 🐞 button in the spelling screen) *and* starts the real mic. Captures are written
+> under **`.captures/` (gitignored)** — audio is **never** committed or uploaded.
+
+**1 · Capture.** In spelling, open the Mic Console (🐞) and click **🎤 Use mic**. Alongside
+speech recognition, the browser records the mic audio (`MediaRecorder`, webm/opus). When the
+mic stops (you tap stop, or the attempt is evaluated) it POSTs to `/api/capture`, which writes:
+
+```
+.captures/<ISO-timestamp>-<word>/
+  audio.webm    the recorded mic audio
+  events.json   this session's mic-event slice (interim/final/emit/restart/error)
+  meta.json     { word, tiles, startedAt, endedAt, userAgent }
+```
+
+`GET /api/captures` lists the folders. (The API runs as a Windows service — after deploying
+this, restart `word-lab-api` so it serves `/api/capture`.)
+
+**2 · Replay.** Run a capture back through the server STT and compare what each "ear" heard:
+
+```bash
+node scripts/replay-capture.mjs .captures/<folder>            # needs the dev server (OPENAI_API_KEY)
+node scripts/replay-capture.mjs .captures/<folder> --no-stt   # offline: browser-vs-target only
+```
+
+It prints a table — **target word · letters the browser emitted live · letters server STT heard
+· match** — and **exits non-zero when the browser-emitted letters ≠ the target** (a reproducible
+mic slip), so it can gate automation. The STT column is additive; with no server it degrades
+gracefully to the offline browser-vs-target verdict.
+
+**3 · Promote to a test.** For an interesting failure, copy the `final` transcripts from that
+capture's `events.json` into `test/phonetics.test.js` as **transcript-level** regression cases —
+e.g. `expect(PHON.parseLetters('bee ee see ay ess ee')).toEqual([...])` or an `evalSpelling`
+assertion. This keeps the regression in the repo **without** committing any audio; audio-level
+replays stay local via the CLI above.
+
 ---
 
 ## Deploy to Vercel (static)
@@ -145,10 +189,13 @@ add the API keys as Vercel environment variables (never commit `.env`).
 ## Project layout
 
 ```
-src/lib/         phonetics.js (tolerance engine) · engine-profiles.js · words.js
+src/lib/         phonetics.js (tolerance engine) · capture.js (session capture helpers) ·
+                 engine-profiles.js · words.js
 src/screens/     arcade-kit (design system) · setup-summary · hud-reading · spelling
 src/App.jsx      session routing, queue, scoring
-server/index.js  Phase 4 backend seam (realtime token mint, TTS proxy, LLM judge)
+server/index.js  Phase 4 backend seam (realtime token mint, TTS proxy, LLM judge, /api/capture)
+server/          capture-store.js (writes .captures/ folders)
+scripts/         synthetic-speaker.mjs (reading harness) · replay-capture.mjs (capture replay)
 handoff/         the original design package (specs + prototype) — reference
 ```
 

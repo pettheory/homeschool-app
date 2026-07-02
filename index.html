@@ -64,7 +64,7 @@
   // e.g. "B" popping up only after the child said "E". Final-only costs a short beat
   // (Chrome finalizes on a brief pause) but every letter lands once, correctly ordered.
   // Interim text still streams to the Mic Console for visibility.
-  window.startRealMic = function (cb, isSpelling) {
+  window.startRealMic = function (cb, isSpelling, capture) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { toast('Speech recognition needs Chrome. Use the demo chips to preview the flow.'); return null; }
     if (window.__micCtl) { try { window.__micCtl.stop(); } catch (e) {} } // only one mic at a time
@@ -73,6 +73,64 @@
     let emitted = 0;     // letters emitted from the CURRENT recognition session
     let startedAt = 0;   // when the current session started (ms)
     let quickFails = 0;  // consecutive near-instant ends → mic broken/denied
+
+    // ── Optional session capture (privacy-gated) ──────────────────────────────
+    // When spelling AND the Mic Console is armed (🐞 open), record the mic audio
+    // alongside SpeechRecognition and, on stop, POST audio + this session's mic
+    // events + context to /api/capture for later replay. OFF by default (a child's
+    // voice) — only when a parent/dev opened the debug console. MediaRecorder on
+    // its own getUserMedia stream runs fine next to SpeechRecognition; see
+    // docs/specs/session-capture-replay.md.
+    let capStream = null, capRec = null, capChunks = [], capStartedAt = 0;
+    const capturing = !!(isSpelling && capture && capture.armed && window.Capture
+      && window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    function capMime() {
+      const M = window.MediaRecorder;
+      if (M.isTypeSupported && M.isTypeSupported('audio/webm;codecs=opus')) return 'audio/webm;codecs=opus';
+      if (M.isTypeSupported && M.isTypeSupported('audio/webm')) return 'audio/webm';
+      return '';
+    }
+    function startCapture() {
+      if (!capturing) return;
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+        if (!active) { stream.getTracks().forEach((t) => t.stop()); return; } // stopped while awaiting permission
+        capStream = stream; capStartedAt = Date.now(); capChunks = [];
+        const mime = capMime();
+        capRec = mime ? new window.MediaRecorder(stream, { mimeType: mime }) : new window.MediaRecorder(stream);
+        capRec.ondataavailable = (ev) => { if (ev.data && ev.data.size) capChunks.push(ev.data); };
+        capRec.onstop = postCapture;
+        capRec.start();
+        micLog('capture', 'recording audio for replay (Mic Console armed)');
+      }).catch((e) => micLog('error', 'capture getUserMedia: ' + ((e && e.message) || e)));
+    }
+    function stopCapture() {
+      try { if (capRec && capRec.state !== 'inactive') capRec.stop(); } catch (e) {} // triggers postCapture via onstop
+      try { if (capStream) capStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+      capStream = null;
+    }
+    function postCapture() {
+      try {
+        const endedAt = Date.now();
+        const blob = new Blob(capChunks, { type: (capRec && capRec.mimeType) || 'audio/webm' });
+        const meta = window.Capture.buildCaptureMeta({
+          word: capture.word,
+          tiles: capture.getTiles ? capture.getTiles() : [],
+          startedAt: capStartedAt, endedAt, userAgent: navigator.userAgent,
+        });
+        const events = window.Capture.sliceMicEvents(window.__micEvents, capStartedAt, endedAt);
+        const reader = new FileReader();
+        reader.onloadend = function () {
+          const b64 = String(reader.result || '').split(',')[1] || '';
+          fetch('/api/capture', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ meta, events, audio: b64, mime: blob.type }),
+          }).then((r) => r.json()).then((j) => micLog('capture', 'saved .captures/' + (j.folder || '?')))
+            .catch((e) => micLog('error', 'capture post: ' + ((e && e.message) || e)));
+        };
+        reader.readAsDataURL(blob);
+      } catch (e) { micLog('error', 'capture finalize: ' + ((e && e.message) || e)); }
+    }
+
     const rec = new SR();
     rec.lang = 'en-US'; rec.interimResults = isSpelling; rec.continuous = isSpelling; rec.maxAlternatives = 1;
 
@@ -119,12 +177,13 @@
     };
 
     const ctl = {
-      stop() { active = false; try { rec.stop(); } catch (e) {} if (window.__micCtl === ctl) window.__micCtl = null; },
+      stop() { active = false; try { rec.stop(); } catch (e) {} stopCapture(); if (window.__micCtl === ctl) window.__micCtl = null; },
       get active() { return active; },
     };
 
     toast(isSpelling ? 'Listening… spell out loud (mic stays on)' : 'Listening… read the word out loud');
     safeStart();
+    startCapture(); // no-op unless spelling + armed
     window.__micCtl = ctl;
     return ctl;
   };

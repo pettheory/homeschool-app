@@ -1,7 +1,7 @@
 # Session capture & replay — record real mic sessions, analyze later, promote failures to tests
 
 - **Slug:** session-capture-replay
-- **Status:** ready   <!-- draft → ready → building → done -->
+- **Status:** building   <!-- draft → ready → building → done -->
 - **Owner:** dnichol
 
 ## Problem / why
