@@ -13,6 +13,7 @@ const LAB_VOICES = [
   { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah', blurb: 'Mature, reassuring' },
 ];
 const LAB_MODELS = [
+  { value: 'eleven_v3', label: 'Eleven v3' },
   { value: 'eleven_multilingual_v2', label: 'Multilingual v2' },
   { value: 'eleven_turbo_v2_5', label: 'Turbo v2.5' },
   { value: 'eleven_flash_v2_5', label: 'Flash v2.5' },

@@ -36,7 +36,7 @@ app.get('/api/config', (_req, res) => {
     approach: process.env.ACTIVE_APPROACH || 'B',
     textProcessingModel: process.env.TEXT_PROCESSING_MODEL || 'gpt-5.4-nano',
     realtimeModel: process.env.REALTIME_MODEL || 'gpt-realtime-2',
-    ttsModel: process.env.ELEVENLABS_MODEL || 'eleven_multilingual_v2',
+    ttsModel: process.env.ELEVENLABS_MODEL || 'eleven_v3',
     ttsVoiceId,
     ttsVoiceName: VOICE_NAMES[ttsVoiceId] || 'custom',
     wordListMode: process.env.WORD_LIST_MODE || 'mixed',
@@ -83,20 +83,39 @@ app.post('/api/realtime/session', async (req, res) => {
 });
 
 // ── Engine C: ElevenLabs TTS proxy (Bolt's higher-quality voice) ─────────────
+// Pause markup: callers write SSML `<break time="Xs"/>` (works on v2 models). Eleven v3
+// doesn't support SSML breaks — it uses expressive audio tags — so we translate here,
+// keeping the server the single place that knows which markup the final model needs.
+function adaptMarkup(text, model_id) {
+  if (!/^eleven_v3/.test(model_id)) return text;
+  return String(text)
+    .replace(/<break\s+time="([\d.]+)s?"\s*\/>/gi, (_, s) => {
+      const t = parseFloat(s);
+      return t >= 1 ? ' [long pause] ' : t >= 0.7 ? ' [pause] ' : ' [short pause] ';
+    })
+    .replace(/<break[^>]*\/>/gi, ' [pause] ');
+}
+
 app.post('/api/tts', async (req, res) => {
   if (!process.env.ELEVENLABS_API_KEY) return res.status(400).json({ error: 'ELEVENLABS_API_KEY not configured' });
   try {
-    const { text } = req.body;
     // Voice + model are config-driven (ELEVENLABS_VOICE_ID / ELEVENLABS_MODEL), with a
-    // per-request override so the upcoming Voice Lab can audition options. Defaults:
-    // a warm, kid-friendly voice (Jessica) and the life-like multilingual_v2 model.
+    // per-request override so the Voice Lab can audition options. Defaults: a warm,
+    // kid-friendly voice (Jessica) and eleven_v3 — the most expressive model, with
+    // audio-tag markup ability.
     const voice_id = req.body.voice_id || process.env.ELEVENLABS_VOICE_ID || 'cgSgspJ2msm6clMCkdW9';
-    const model_id = req.body.model_id || process.env.ELEVENLABS_MODEL || 'eleven_multilingual_v2';
-    // Clean, clear defaults (stable, no style exaggeration). `speed` (0.7–1.2, <1 = slower)
-    // is merged in so callers can ask for slow, deliberate enunciation — e.g. saying the
-    // word to SPELL. Works on all models including multilingual_v2.
-    const voice_settings = { stability: 0.5, similarity_boost: 0.8, style: 0, use_speaker_boost: true, ...(req.body.voice_settings || {}) };
+    const model_id = req.body.model_id || process.env.ELEVENLABS_MODEL || 'eleven_v3';
+    const text = adaptMarkup(req.body.text, model_id);
+    // `speed` (0.7–1.2, <1 = slower) lets callers ask for slow, deliberate enunciation —
+    // e.g. saying the word to SPELL. v3 gets a minimal settings object (its stability
+    // works on coarse presets and it rejects some v2-era fields).
+    const voice_settings = /^eleven_v3/.test(model_id)
+      ? { stability: 0.5, ...(req.body.voice_settings || {}) }
+      : { stability: 0.5, similarity_boost: 0.8, style: 0, use_speaker_boost: true, ...(req.body.voice_settings || {}) };
     if (req.body.speed != null) voice_settings.speed = Math.max(0.7, Math.min(1.2, req.body.speed));
+    // Ground truth of what actually got synthesized — lands in the service log
+    // (.loops/shawl_for_word-lab-api_*.log), so "which model played?" is never guesswork.
+    console.log(`[tts] model=${model_id} voice=${voice_id} speed=${voice_settings.speed ?? 'default'} text="${String(text).slice(0, 60)}${String(text).length > 60 ? '…' : ''}"`);
     const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice_id}`, {
       method: 'POST',
       headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
