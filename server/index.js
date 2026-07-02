@@ -14,12 +14,14 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'node:path';
+import { writeCapture, listCaptures } from './capture-store.js';
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '25mb' }));
 
 // ── Config: which engine is active + which keys are present (never the keys) ──
 // Friendly names for the curated ElevenLabs voices (so the UI can show who's speaking).
@@ -152,6 +154,35 @@ app.post('/api/transcribe', express.raw({ type: ['audio/*', 'application/octet-s
   } catch (e) {
     console.error('[transcribe] error:', e);
     res.status(500).json({ error: 'transcription failed' });
+  }
+});
+
+// ── Session capture: record a real-mic spelling attempt for later replay ──────
+// The browser (only when the Mic Console is armed — see docs/specs/
+// session-capture-replay.md) POSTs the recorded audio + the mic-event slice +
+// context. We land each session in `.captures/<ISO>-<word>/` (gitignored: a
+// child's voice stays on this machine). The replay CLI (scripts/replay-capture.mjs)
+// reads those folders back. JSON+base64 keeps it on the existing express.json
+// middleware — no multipart parser / new dep.
+const CAPTURES_DIR = path.join(process.cwd(), '.captures');
+app.post('/api/capture', (req, res) => {
+  try {
+    const folder = writeCapture(CAPTURES_DIR, req.body || {}, Date.now());
+    const bytes = req.body && req.body.audio ? Buffer.from(req.body.audio, 'base64').length : 0;
+    const events = (req.body && req.body.events) || [];
+    console.log(`[capture] wrote .captures/${folder} (${events.length} events, ${bytes} audio bytes)`);
+    res.json({ ok: true, folder });
+  } catch (e) {
+    console.error('[capture] error:', e);
+    res.status(500).json({ error: 'capture failed' });
+  }
+});
+app.get('/api/captures', (_req, res) => {
+  try {
+    res.json({ captures: listCaptures(CAPTURES_DIR) });
+  } catch (e) {
+    console.error('[captures] error:', e);
+    res.status(500).json({ error: 'list failed' });
   }
 });
 
